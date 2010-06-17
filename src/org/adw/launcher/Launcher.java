@@ -264,6 +264,7 @@ public final class Launcher extends Activity implements View.OnClickListener, On
 	private boolean uiHideLabels=false;
 	private boolean wallpaperHack=true;
 	private boolean showAB2=false;
+	private boolean scrollableSupport=false;
 	/**
 	 * ADW: Home binding constants
 	 */
@@ -868,52 +869,46 @@ public final class Launcher extends Activity implements View.OnClickListener, On
      * @param cellInfo The position on screen where to create the widget.
      */
     private void completeAddAppWidget(Intent data, CellLayout.CellInfo cellInfo,
-            boolean insertAtFirst) {
+            final boolean insertAtFirst) {
 
         Bundle extras = data.getExtras();
-        int appWidgetId = extras.getInt(AppWidgetManager.EXTRA_APPWIDGET_ID, -1);
+        final int appWidgetId = extras.getInt(AppWidgetManager.EXTRA_APPWIDGET_ID, -1);
 
         if (LOGD) d(LOG_TAG, "dumping extras content="+extras.toString());
 
-        AppWidgetProviderInfo appWidgetInfo = mAppWidgetManager.getAppWidgetInfo(appWidgetId);
+        final AppWidgetProviderInfo appWidgetInfo = mAppWidgetManager.getAppWidgetInfo(appWidgetId);
 
         // Calculate the grid spans needed to fit this widget
         CellLayout layout = (CellLayout) mWorkspace.getChildAt(cellInfo.screen);
-        int[] spans = layout.rectToCell(appWidgetInfo.minWidth, appWidgetInfo.minHeight);
+        final int[] spans = layout.rectToCell(appWidgetInfo.minWidth, appWidgetInfo.minHeight);
+        final CellLayout.CellInfo cInfo=cellInfo;
+		AlertDialog.Builder builder;
+		AlertDialog alertDialog;
 
-        // Try finding open space on Launcher screen
-        final int[] xy = mCellCoordinates;
-        if (!findSlot(cellInfo, xy, spans[0], spans[1])) {
-            if (appWidgetId != -1) mAppWidgetHost.deleteAppWidgetId(appWidgetId);
-            return;
-        }
-
-        // Build Launcher-specific widget info and save to database
-        LauncherAppWidgetInfo launcherInfo = new LauncherAppWidgetInfo(appWidgetId);
-        launcherInfo.spanX = spans[0];
-        launcherInfo.spanY = spans[1];
-
-        LauncherModel.addItemToDatabase(this, launcherInfo,
-                LauncherSettings.Favorites.CONTAINER_DESKTOP,
-                mWorkspace.getCurrentScreen(), xy[0], xy[1], false);
-
-        if (!mRestoring) {
-            sModel.addDesktopAppWidget(launcherInfo);
-
-            // Perform actual inflation because we're live
-            launcherInfo.hostView = mAppWidgetHost.createView(this, appWidgetId, appWidgetInfo);
-
-            launcherInfo.hostView.setAppWidget(appWidgetId, appWidgetInfo);
-            launcherInfo.hostView.setTag(launcherInfo);
-
-            mWorkspace.addInCurrentScreen(launcherInfo.hostView, xy[0], xy[1],
-                    launcherInfo.spanX, launcherInfo.spanY, insertAtFirst);
-        } else if (sModel.isDesktopLoaded()) {
-            sModel.addDesktopAppWidget(launcherInfo);
-        }
-        // finish load a widget, send it an intent
-        if(appWidgetInfo!=null)
-        	appwidgetReadyBroadcast(appWidgetId, appWidgetInfo.provider);
+		Context mContext = getApplicationContext();
+		LayoutInflater inflater = (LayoutInflater) mContext.getSystemService(LAYOUT_INFLATER_SERVICE);
+		View dialoglayout = inflater.inflate(R.layout.widget_span_setup,
+		                               (ViewGroup) findViewById(R.id.layout_root));
+		final NumberPicker ncols=(NumberPicker)dialoglayout.findViewById(R.id.widget_columns_span);
+		ncols.setRange(1, mWorkspace.currentDesktopColumns());
+		ncols.setCurrent(spans[0]);
+		final NumberPicker nrows=(NumberPicker)dialoglayout.findViewById(R.id.widget_rows_span);
+		nrows.setRange(1, mWorkspace.currentDesktopRows());
+		nrows.setCurrent(spans[1]);
+		builder = new AlertDialog.Builder(this);
+		builder.setView(dialoglayout);
+		alertDialog = builder.create();
+        alertDialog.setTitle(getResources().getString(R.string.widget_config_dialog_title));
+        alertDialog.setMessage(getResources().getString(R.string.widget_config_dialog_summary));
+        alertDialog.setButton(DialogInterface.BUTTON_POSITIVE, getResources().getString(android.R.string.ok), 
+            new DialogInterface.OnClickListener() {
+            public void onClick(DialogInterface dialog, int which) {
+            	spans[0]=ncols.getCurrent();
+            	spans[1]=nrows.getCurrent();
+            	prueba(appWidgetInfo,cInfo,spans,appWidgetId,insertAtFirst);
+            }
+        });
+		alertDialog.show();
     }
 
     public LauncherAppWidgetHost getAppWidgetHost() {
@@ -2565,6 +2560,7 @@ public final class Launcher extends Activity implements View.OnClickListener, On
 	        }
         }
         wallpaperHack=AlmostNexusSettingsHelper.getWallpaperHack(this);
+        scrollableSupport=AlmostNexusSettingsHelper.getUIScrollableWidgets(this);
     }
     /**
      * ADW: Refresh UI status variables and elements after changing settings.
@@ -3052,9 +3048,11 @@ public final class Launcher extends Activity implements View.OnClickListener, On
 		}
 	}
 	private void appwidgetReadyBroadcast(int appWidgetId, ComponentName cname) {
-		Intent ready = new Intent(LauncherIntent.Action.ACTION_READY).putExtra(
-				AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId).setComponent(cname);
-		sendBroadcast(ready);
+		if(isScrollableAllowed()){
+			Intent ready = new Intent(LauncherIntent.Action.ACTION_READY).putExtra(
+					AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId).setComponent(cname);
+			sendBroadcast(ready);
+		}
 	}
 	/**
 	 * ADW: Home binding actions
@@ -3132,4 +3130,43 @@ public final class Launcher extends Activity implements View.OnClickListener, On
 			break;
 		}
 	}
+	public boolean isScrollableAllowed(){
+		return scrollableSupport;
+	}
+	private void prueba(AppWidgetProviderInfo appWidgetInfo,CellLayout.CellInfo cellInfo, int[]spans,int appWidgetId,boolean insertAtFirst){
+        // Try finding open space on Launcher screen
+        final int[] xy = mCellCoordinates;
+        if (!findSlot(cellInfo, xy, spans[0], spans[1])) {
+            if (appWidgetId != -1) mAppWidgetHost.deleteAppWidgetId(appWidgetId);
+            return;
+        }
+
+        // Build Launcher-specific widget info and save to database
+        LauncherAppWidgetInfo launcherInfo = new LauncherAppWidgetInfo(appWidgetId);
+        launcherInfo.spanX = spans[0];
+        launcherInfo.spanY = spans[1];
+
+        LauncherModel.addItemToDatabase(this, launcherInfo,
+                LauncherSettings.Favorites.CONTAINER_DESKTOP,
+                mWorkspace.getCurrentScreen(), xy[0], xy[1], false);
+
+        if (!mRestoring) {
+            sModel.addDesktopAppWidget(launcherInfo);
+
+            // Perform actual inflation because we're live
+            launcherInfo.hostView = mAppWidgetHost.createView(this, appWidgetId, appWidgetInfo);
+
+            launcherInfo.hostView.setAppWidget(appWidgetId, appWidgetInfo);
+            launcherInfo.hostView.setTag(launcherInfo);
+
+            mWorkspace.addInCurrentScreen(launcherInfo.hostView, xy[0], xy[1],
+                    launcherInfo.spanX, launcherInfo.spanY, insertAtFirst);
+        } else if (sModel.isDesktopLoaded()) {
+            sModel.addDesktopAppWidget(launcherInfo);
+        }
+        // finish load a widget, send it an intent
+        if(appWidgetInfo!=null)
+        	appwidgetReadyBroadcast(appWidgetId, appWidgetInfo.provider);
+	}
+
 }
